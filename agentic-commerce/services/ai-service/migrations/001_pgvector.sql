@@ -1,0 +1,23 @@
+-- Enable pgvector. Requires the postgres image to be `pgvector/pgvector:pg16`
+-- (set in docker-compose.yml). With plain `postgres:15-alpine` this would fail.
+CREATE EXTENSION IF NOT EXISTS vector;
+
+CREATE TABLE IF NOT EXISTS product_embeddings (
+  product_id  BIGINT PRIMARY KEY,
+  name        TEXT NOT NULL,
+  description TEXT NOT NULL DEFAULT '',
+  category    TEXT NOT NULL DEFAULT 'general',
+  -- 768 = nomic-embed-text dimension. If you swap models, change this and
+  -- re-embed everything. Mixed dimensions in one table is a footgun.
+  embedding   VECTOR(768) NOT NULL,
+  created_at  TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+  updated_at  TIMESTAMPTZ NOT NULL DEFAULT NOW()
+);
+
+-- IVFFlat index for approximate nearest neighbor search. For < 1M rows this
+-- is plenty; for larger scale switch to HNSW. `lists` should be roughly
+-- sqrt(N) where N is the row count.
+CREATE INDEX IF NOT EXISTS idx_product_embeddings_vec
+  ON product_embeddings
+  USING ivfflat (embedding vector_cosine_ops)
+  WITH (lists = 10);

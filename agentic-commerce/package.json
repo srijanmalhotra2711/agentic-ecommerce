@@ -1,0 +1,24 @@
+{
+  "name": "agentic-commerce",
+  "version": "1.0.0",
+  "private": true,
+  "description": "E-commerce microservices platform with agentic AI: semantic search, conversational shopping, and event-driven AI enrichment",
+  "workspaces": [
+    "shared/*",
+    "services/user-service",
+    "services/product-service",
+    "services/order-service"
+  ],
+  "scripts": {
+    "build": "npm run build --workspaces --if-present",
+    "lint": "npm run lint --workspaces --if-present",
+    "test": "npm run test --workspaces --if-present",
+    "smoke-test": "bash scripts/smoke-test.sh"
+  },
+  "devDependencies": {
+    "typescript": "^5.4.5"
+  },
+  "engines": {
+    "node": ">=20.0.0"
+  }
+}

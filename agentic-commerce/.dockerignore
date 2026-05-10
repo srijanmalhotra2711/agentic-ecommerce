@@ -1,0 +1,16 @@
+**/node_modules
+**/.env
+**/.env.local
+**/coverage
+**/dist
+**/build
+**/.git
+**/.github
+.DS_Store
+**/__pycache__
+**/.venv
+**/venv
+**/.pytest_cache
+*.md
+!README.md
+ollama-data/
