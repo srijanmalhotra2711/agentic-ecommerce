@@ -1,169 +1,157 @@
 # agentic-commerce
 
-E-commerce microservices platform with **agentic AI** at its core: semantic product search powered by local LLMs and event-driven AI enrichment integrated into a distributed event mesh.
+> **A self-hosted LLM agent placing real orders through 4 microservices.** Natural language in, executed transactions out — with pgvector semantic search, transactional outbox guarantees, and full correlation-ID tracing.
 
-This isn't a chatbot bolted onto a REST API. The AI service is a first-class citizen in the architecture — consuming `ProductCreated` events to auto-generate embeddings, exposing semantic search via pgvector, and laying the groundwork for an agentic shopping assistant that orchestrates the other services through tool-calling.
+## What this is
+
+An e-commerce platform where **the AI service is a first-class citizen**, not a chatbot bolted on the side. A locally-hosted Llama 3.1 8B model orchestrates the catalog, ordering, and embedding services through tool-calling — placing real transactions backed by a transactional outbox, Kafka events, and a 768-dimension pgvector index.
+
+Built to demonstrate that "agentic AI" is mostly *backend infrastructure problems* (state, retries, idempotency, observability, safety gates) wearing an LLM hat.
+
+## A real interaction
+
+User types `"Find me a quiet keyboard"` and the agent:
+
+1. Picks `semantic_search_products` from its tool list
+2. Embeds the query via Ollama (`nomic-embed-text`, 768-dim)
+3. pgvector returns the top matches by cosine similarity
+4. ai-service enriches results with live prices from `product-service` over HTTP
+5. The LLM recommends the **Mechanical Keyboard** at the real catalog price
+6. On "propose an order," `propose_order` writes to a `pending_orders` row and returns a summary
+7. On "confirm," `confirm_order` calls `order-service`, which writes a real row to `pg-orders` inside the transactional outbox
+
+Three turns of natural language. End to end, ~25 seconds with the LLM warm. Every step traces through structured logs with a single correlation ID.
+
+## Why this stands out
+
+- **Real agency, not a demo.** The LLM places a real order. End to end.
+- **Two-phase safety gate.** The agent cannot create an order in one turn. The schema enforces propose-then-confirm — preventing runaway agent behavior at the architectural level, not via prompt-engineering wishes.
+- **Self-hosted LLM.** No API keys, no per-token costs. Ollama running Llama 3.1 8B + `nomic-embed-text` (768d) inside Docker. The whole stack runs on a 16GB MacBook.
+- **Polyglot microservices.** TypeScript (strict mode) for user/product/order — Python (FastAPI + asyncpg) for the AI service. Each language at the boundary where it's strongest.
+- **Production patterns under it.** Transactional outbox, correlation IDs across HTTP + Kafka, structured logging with redaction, healthchecks gating service start, multi-stage Docker builds, non-root containers.
 
 ## Architecture
 
-```
-┌──────────┐    ┌──────────┐    ┌──────────┐    ┌──────────────┐
-│  user-   │    │ product- │    │  order-  │    │  ai-service  │
-│ service  │    │ service  │    │ service  │    │  (Python)    │
-│   (TS)   │    │   (TS)   │    │   (TS)   │    │              │
-└────┬─────┘    └────┬─────┘    └────┬─────┘    └──────┬───────┘
-     │               │               │                 │
-     │           ┌───▼───────────────▼───┐         ┌───▼────┐
-     │           │      Apache Kafka     │◄────────┤ Ollama │
-     │           │     (event bus)       │         │ (LLM + │
-     │           └───────────┬───────────┘         │ embed) │
-     │                       │                     └────────┘
-     ▼                       ▼                         │
- pg-users              pg-products                     ▼
-                       pg-orders                   pg-ai (pgvector)
-```
+![Architecture diagram](docs/architecture.png)
 
-**Languages:**
-- TypeScript (Node 20) for user/product/order — strict mode, full type safety
-- Python 3.12 (FastAPI) for ai-service — the AI/ML ecosystem standard
-
-**Why polyglot?** Each service uses the language and ecosystem best suited to its domain. Splitting at clean boundaries demonstrates real microservices reasoning, not "everything in Node because the tutorial said so."
-
-## Engineering features
-
-- **Transactional outbox** in order-service for guaranteed at-least-once event publishing (no lost events when the process crashes between DB commit and Kafka publish)
-- **Correlation IDs** propagated through HTTP headers and Kafka message headers, with `AsyncLocalStorage` (Node) and `ContextVar` (Python) wiring them automatically into every log line
-- **Structured JSON logging** (Pino + structlog) with redaction of credentials
-- **Liveness vs readiness** distinction — liveness restarts the pod, readiness only de-registers it from the load balancer
-- **Graceful shutdown** drains in-flight requests, commits Kafka offsets, closes DB pools
-- **Multi-stage Docker builds** producing ~150MB images, running as non-root
-- **Healthchecks** on every container with `condition: service_healthy` in compose so startup ordering is deterministic
-- **Env validation** at startup via Zod (TS) / Pydantic (Py) — service refuses to boot with bad config
-- **pgvector** for semantic search at scale, with cosine-similarity IVFFlat index
-- **Event-driven AI**: `ProductCreated` → ai-service consumer → embedding generated → stored in pgvector
-
-## Tech stack
-
-| Layer | Choice | Why |
+| Layer | Tech | Purpose |
 |---|---|---|
-| Backend (CRUD) | Node 20 + TypeScript + Express | Type safety with the JS ecosystem reach |
-| Backend (AI) | Python 3.12 + FastAPI | All AI/ML tooling lives here |
-| Event bus | Apache Kafka | Industry standard, exactly-once with idempotent producer |
-| Databases | Postgres 16 (per service) | One DB per service is the textbook microservices boundary |
-| Vector store | pgvector | Reuses Postgres, no separate vector DB to operate |
-| LLM | Ollama (local) — `llama3.2:3b` | Free, no API keys, demonstrates self-hosted ML serving |
-| Embeddings | Ollama — `nomic-embed-text` (768d) | Open-source, fast, runs on CPU |
-| Container | Docker + docker-compose | Local dev parity with K8s deploy targets |
+| Gateway-less microservices | Node 20 + TypeScript, Python 3.12 + FastAPI | One service per business domain |
+| Event bus | Apache Kafka | OrderCreated, ProductCreated, UserRegistered |
+| Per-service databases | Postgres 16 (`pgvector` for AI) | Database-per-service isolation |
+| LLM serving | Ollama (Llama 3.1 8B) | Tool-calling chat completion |
+| Embeddings | Ollama (`nomic-embed-text`, 768d) | Cosine-similarity product search |
+| Shared TS lib | `@agentic-commerce/common` | Pino logging, AsyncLocalStorage correlation, typed errors, env validation |
+| Runtime | Docker Compose | Healthcheck-gated startup ordering |
+
+## Key engineering patterns
+
+**Transactional outbox** in `order-service` — order rows and `event_outbox` rows commit in the same Postgres transaction, then a polling worker ships events to Kafka. Guarantees at-least-once event publishing even if the process crashes between DB commit and Kafka send.
+
+**Correlation IDs everywhere** — generated at the request edge, propagated through HTTP headers, Kafka message headers, and the Python `ContextVar` / Node `AsyncLocalStorage`. Every log line includes `correlation_id` so a single grep traces a request from chat → tool call → DB write → outbox → Kafka.
+
+**LLM arg-coercion layer** — small models pass numeric args as strings, lists as JSON-strings, and items as bare integers. The tool executor normalizes all of these before calling business logic. Real production agents need this layer; tutorials skip it.
+
+**Two-phase order placement** — `propose_order` writes to `pending_orders` and returns awaiting-confirmation. `confirm_order` reads the proposal and only then calls `order-service`. The LLM is structurally prevented from one-shot order creation; the prompt rules are belt-and-suspenders.
+
+**Database-per-service** — `pg-users`, `pg-products`, `pg-orders`, `pg-ai`. Each service owns its own schema. Cross-service reads happen over HTTP with correlation IDs, never via direct DB access.
 
 ## Quick start
 
-### Prerequisites
-- Docker Desktop (allocate at least 6GB RAM — Ollama models need it)
-- A reasonably modern Mac/Linux machine; Ollama can run on Windows but isn't tested here
+Requires Docker Desktop with at least 12GB memory allocated (the LLM needs ~5GB resident).
 
-### One-time setup
 ```bash
-# 1. Build all services
+# 1. Build everything
 docker compose build
 
-# 2. Bring up infrastructure first (Postgres, Kafka, Ollama)
+# 2. Bring up infra first
 docker compose up -d zookeeper pg-users pg-products pg-orders pg-ai
 docker compose up -d kafka ollama
 
-# 3. Wait for Kafka and Ollama to be healthy (~30 seconds)
-docker compose ps   # look for "(healthy)" status
+# 3. Wait ~30s for kafka and ollama to be healthy
+docker compose ps   # look for "(healthy)"
 
-# 4. Pull the Ollama models (one-time, ~2.3GB total)
-./scripts/pull-ollama-models.sh
+# 4. Pull the LLM and embedding models (~7GB, one-time)
+docker compose exec ollama ollama pull llama3.1:8b
+docker compose exec ollama ollama pull nomic-embed-text
 
-# 5. Start application services
+# 5. Start the services
 docker compose up -d user-service product-service order-service ai-service
-```
 
-### Verify everything works
-```bash
+# 6. Verify the full stack
 ./scripts/smoke-test.sh
+./scripts/smoke-test-phase2.sh
 ```
-Expected output: a green checklist of 8 passing tests, ending with a real semantic search result.
 
-### Try it manually
+## Try the agent
+
 ```bash
-# Register and log in
-curl -X POST http://localhost:3001/auth/register \
+# Search semantically — natural language, returns real catalog data
+curl -s -X POST http://localhost:8000/ai/chat \
   -H 'Content-Type: application/json' \
-  -d '{"email":"a@b.com","password":"password123","name":"Alice"}'
+  -d '{"user_id":1,"session_id":"demo","message":"Find me a quiet keyboard"}' \
+  | python3 -m json.tool
 
-curl -X POST http://localhost:3001/auth/login \
+# Propose an order
+curl -s -X POST http://localhost:8000/ai/chat \
   -H 'Content-Type: application/json' \
-  -d '{"email":"a@b.com","password":"password123"}'
+  -d '{"user_id":1,"session_id":"demo","message":"Propose an order for one of those"}' \
+  | python3 -m json.tool
 
-# List seeded products
-curl http://localhost:3002/products
-
-# Semantic search — natural language!
-curl -X POST http://localhost:8000/ai/semantic-search \
+# Confirm — the agent writes a real row to pg-orders
+curl -s -X POST http://localhost:8000/ai/chat \
   -H 'Content-Type: application/json' \
-  -d '{"query":"something quiet to type on","limit":3}'
+  -d '{"user_id":1,"session_id":"demo","message":"Yes, confirm it"}' \
+  | python3 -m json.tool
 
-# Place an order — exercises product fetch + outbox pattern
-curl -X POST http://localhost:3003/orders \
-  -H 'Content-Type: application/json' \
-  -d '{"user_id":1,"items":[{"product_id":1,"quantity":2}]}'
+# Verify the real order materialized
+docker compose exec pg-orders psql -U postgres -d orders_db \
+  -c "SELECT id, user_id, total_amount, status, created_at FROM orders ORDER BY id DESC LIMIT 3;"
 ```
 
-## Project layout
+## Layout
 
 ```
 .
-├── docker-compose.yml          # 4 services + 4 Postgres + Kafka + Ollama
-├── package.json                # npm workspaces root (TypeScript services)
-├── shared/
-│   └── common/                 # @agentic-commerce/common — TS shared lib
-│       └── src/
-│           ├── logger/         # Pino with redaction + correlation
-│           ├── correlation/    # AsyncLocalStorage propagation
-│           ├── kafka/          # Producer + consumer with header wiring
-│           ├── health/         # /healthz and /readyz with shutdown gating
-│           ├── shutdown/       # SIGTERM-aware drain
-│           ├── env/            # Zod-based fail-fast validation
-│           └── errors/         # Typed errors + Express middleware
+├── shared/common/                   @agentic-commerce/common (TS shared lib)
+│   └── src/{logger,correlation,health,shutdown,env,kafka,errors}
 ├── services/
-│   ├── user-service/           # Auth: register/login + JWT
-│   ├── product-service/        # Catalog CRUD, publishes ProductCreated
-│   ├── order-service/          # Orders + transactional outbox
-│   └── ai-service/             # Python: embeddings, semantic search,
-│       │                       # event consumer, future agentic chat
+│   ├── user-service/                Auth: register/login + JWT
+│   ├── product-service/             Catalog CRUD, publishes ProductCreated
+│   ├── order-service/               Orders + transactional outbox
+│   └── ai-service/                  Python: pgvector + LLM agent
 │       ├── app/
-│       │   ├── main.py
-│       │   ├── routers/        # FastAPI routers (health, search, chat)
-│       │   ├── services/       # Embeddings, Ollama client
-│       │   ├── events/         # Kafka consumer
-│       │   └── db/             # asyncpg pool
-│       └── migrations/         # pgvector setup
-└── scripts/
-    ├── smoke-test.sh           # End-to-end check
-    └── pull-ollama-models.sh   # First-time Ollama model download
+│       │   ├── routers/             /healthz, /ai/semantic-search, /ai/chat
+│       │   ├── services/
+│       │   │   ├── ollama.py        Ollama HTTP client (embed + chat)
+│       │   │   ├── embeddings.py    pgvector upsert + cosine search
+│       │   │   ├── tools.py         5 tool schemas for LLM
+│       │   │   ├── tool_executor.py Tool execution with arg coercion
+│       │   │   └── agent.py         Multi-turn loop with persisted memory
+│       │   └── events/consumer.py   Kafka consumer for auto-embedding
+│       └── migrations/              pgvector + conversations + pending_orders
+├── docker-compose.yml               4 services + 4 Postgres + Kafka + Ollama
+└── scripts/                         Smoke tests + Ollama setup
 ```
 
 ## Roadmap
 
-This repo is built incrementally. The current state is **Phase 1**.
-
 | Phase | Feature | Status |
 |---|---|---|
-| 1 | Foundation: 4 services, shared lib, outbox, semantic search | ✅ Done |
-| 2 | Agentic shopping assistant — LLM with tool-calling | ⏳ Next |
-| 3 | Event-driven AI enrichment (auto SEO descriptions, attributes) | ⏳ |
+| 1 | Foundation: shared lib, 4 services, outbox, semantic search | ✅ |
+| 2 | Agentic shopping assistant with LLM tool-calling | ✅ |
+| 3 | Event-driven AI enrichment (auto SEO descriptions on ProductCreated) | ⏳ |
 | 4 | Saga compensating actions for failed orders | ⏳ |
-| 5 | OpenTelemetry distributed tracing → Jaeger | ⏳ |
-| 6 | Kubernetes manifests + minimal frontend | ⏳ |
+| 5 | OpenTelemetry → Jaeger distributed traces | ⏳ |
+| 6 | Next.js chat frontend | ⏳ |
 
-## Resume bullets earned by this repo
+## Resume framing
 
-- *"Designed a 4-service e-commerce platform with TypeScript and Python, integrating a local-LLM-backed AI service for semantic search via pgvector embeddings (768-dim, cosine similarity)."*
-- *"Implemented the transactional outbox pattern in the order service, guaranteeing at-least-once event publication across the Kafka event mesh."*
-- *"Built end-to-end correlation ID propagation across HTTP and Kafka boundaries using `AsyncLocalStorage` and Python `ContextVar`, enabling distributed tracing via structured logs alone."*
-- *"Containerized 4 services with multi-stage Docker builds, non-root users, and HTTP healthchecks; orchestrated with docker-compose using `condition: service_healthy` for deterministic startup."*
+> Built a self-hosted agentic AI system in a polyglot microservices platform. A locally-hosted Llama 3.1 8B model orchestrates 3 backend services via tool-calling (semantic search, product lookup, two-phase order placement) with conversation memory persisted in Postgres. Designed a confirmation-gated execution model that structurally prevents the agent from placing orders without explicit user consent — addressing a common safety failure mode of LLM-driven action systems.
+
+> Implemented the transactional outbox pattern in TypeScript using Postgres `FOR UPDATE SKIP LOCKED`, guaranteeing at-least-once event publishing to Kafka across the order lifecycle. End-to-end correlation IDs propagate from natural-language input through pgvector cosine-similarity search to Kafka message headers, enabling full request tracing via structured logs alone.
+
+> Containerized 4 services (TypeScript + Python + Postgres + Kafka + Ollama) with multi-stage Docker builds, non-root execution, and `condition: service_healthy` startup ordering. Designed defensive argument coercion in the LLM tool layer to handle real-world model output quirks (string-encoded numerics, JSON-string-wrapped lists, bare-integer items) — a layer most tool-calling implementations skip and discover the hard way in production.
 
 ## License
-MIT — portfolio project, use however you like.
+MIT
