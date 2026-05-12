@@ -15,7 +15,7 @@ log = get_logger(__name__)
 class OllamaClient:
     def __init__(self, base_url: Optional[str] = None) -> None:
         self.base_url = (base_url or settings.ollama_url).rstrip("/")
-        self._client = httpx.AsyncClient(base_url=self.base_url, timeout=httpx.Timeout(120.0))
+        self._client = httpx.AsyncClient(base_url=self.base_url, timeout=httpx.Timeout(300.0))
 
     async def aclose(self) -> None:
         await self._client.aclose()

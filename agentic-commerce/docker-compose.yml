@@ -222,7 +222,7 @@ services:
       KAFKA_BROKERS: kafka:29092
       OLLAMA_URL: http://ollama:11434
       EMBEDDING_MODEL: nomic-embed-text
-      LLM_MODEL: llama3.2:3b
+      LLM_MODEL: llama3.1:8b
       PRODUCT_SERVICE_URL: http://product-service:3002
       ORDER_SERVICE_URL: http://order-service:3003
     depends_on:
