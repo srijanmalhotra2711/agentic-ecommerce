@@ -32,7 +32,61 @@ Three turns of natural language. End to end, ~25 seconds with the LLM warm. Ever
 
 ## Architecture
 
-![Architecture diagram](docs/architecture.png)
+```mermaid
+flowchart TB
+    Client(["Client<br/>(HTTP)"])
+
+    subgraph Services["Microservices"]
+        direction LR
+        User["user-service<br/><i>Node 20 / TS</i><br/>auth, JWT"]
+        Product["product-service<br/><i>Node 20 / TS</i><br/>catalog"]
+        Order["order-service<br/><i>Node 20 / TS</i><br/>orders + outbox"]
+        AI["<b>ai-service</b><br/><i>Python 3.12 / FastAPI</i><br/>LLM agent + pgvector"]
+    end
+
+    subgraph Runtime["Runtime"]
+        direction LR
+        Kafka[("Apache Kafka<br/>UserRegistered • ProductCreated<br/>OrderCreated • OrderConfirmed")]
+        Ollama["Ollama<br/>llama3.1:8b<br/>nomic-embed-text"]
+    end
+
+    subgraph Data["Data layer"]
+        direction LR
+        PGU[("pg-users")]
+        PGP[("pg-products")]
+        PGO[("pg-orders<br/>+ event_outbox")]
+        PGA[("pg-ai<br/>+ pgvector 768d")]
+    end
+
+    Client --> User
+    Client --> Product
+    Client --> Order
+    Client --> AI
+
+    User <--> Kafka
+    Product <--> Kafka
+    Order <--> Kafka
+    AI <--> Kafka
+
+    AI <--> Ollama
+    AI -. "tool calls" .-> Product
+    AI -. "tool calls" .-> Order
+
+    User --> PGU
+    Product --> PGP
+    Order --> PGO
+    AI --> PGA
+
+    classDef hero fill:#fef3c7,stroke:#d97706,stroke-width:2px,color:#000
+    classDef service fill:#dbeafe,stroke:#2563eb,color:#000
+    classDef runtime fill:#fce7f3,stroke:#be185d,color:#000
+    classDef data fill:#d1fae5,stroke:#059669,color:#000
+
+    class AI hero
+    class User,Product,Order service
+    class Kafka,Ollama runtime
+    class PGU,PGP,PGO,PGA data
+```
 
 | Layer | Tech | Purpose |
 |---|---|---|
