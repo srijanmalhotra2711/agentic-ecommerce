@@ -194,7 +194,7 @@ docker compose exec pg-orders psql -U postgres -d orders_db \
 |---|---|---|
 | 1 | Foundation: shared lib, 4 services, outbox, semantic search | ✅ |
 | 2 | Agentic shopping assistant with LLM tool-calling | ✅ |
-| 3 | Event-driven AI enrichment (auto SEO descriptions on ProductCreated) | ⏳ |
+| 3 | Event-driven AI enrichment (auto SEO descriptions on ProductCreated) | ✅ |
 | 4 | Saga compensating actions for failed orders | ⏳ |
 | 5 | OpenTelemetry → Jaeger distributed traces | ⏳ |
 | 6 | Next.js chat frontend | ⏳ |
