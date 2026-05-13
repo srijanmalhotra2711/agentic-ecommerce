@@ -9,6 +9,7 @@ from .db import close_pool, init_pool
 from .events.consumer import get_consumer
 from .logger import configure_logging, get_logger
 from .routers import chat as chat_router
+from .routers import enrichment as enrichment_router
 from .routers import health as health_router
 from .routers import search as search_router
 from .services.ollama import close_ollama_client
@@ -44,8 +45,11 @@ async def lifespan(_app: FastAPI):
 
 app = FastAPI(
     title="agentic-commerce AI service",
-    description="Semantic search and agentic shopping assistant via local Ollama models",
-    version="2.0.0",
+    description=(
+        "Semantic search, agentic shopping assistant, and event-driven "
+        "AI enrichment via local Ollama models"
+    ),
+    version="3.0.0",
     lifespan=lifespan,
 )
 
@@ -53,6 +57,7 @@ app.add_middleware(CorrelationMiddleware)
 app.include_router(health_router.router)
 app.include_router(search_router.router)
 app.include_router(chat_router.router)
+app.include_router(enrichment_router.router)
 
 
 if __name__ == "__main__":
